@@ -45,7 +45,6 @@ async def translate_text(req: TranslateRequest):
 # --------------------------------
 # 2. Text-to-Image Endpoint (fal.ai example)
 # --------------------------------
-FAL_API_KEY = os.getenv("FAL_API_KEY")
 
 class ImageRequest(BaseModel):
     prompt: str
@@ -55,18 +54,19 @@ class ImageRequest(BaseModel):
 
 @app.post("/generate-image")
 async def generate_image(req: ImageRequest):
-    if not FAL_API_KEY:
-        raise HTTPException(500, "fal.ai API key not configured")
+    fal_api_key = os.getenv("FAL_API_KEY")
+    if not fal_api_key:
+        raise HTTPException(500, "fal.ai API key not configured. Set FAL_API_KEY and restart the server.")
 
     payload = {
         "prompt": req.prompt,
         "image_size": f"{req.width}x{req.height}",
         "model": req.model,
-        "api_key": FAL_API_KEY,
+        "api_key": fal_api_key,
     }
 
     headers = {
-        "Authorization": f"Key {FAL_API_KEY}",
+        "Authorization": f"Key {fal_api_key}",
         "Content-Type": "application/json",
     }
 
