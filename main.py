@@ -35,6 +35,58 @@ async def translate_text(req: TranslateRequest):
         raise HTTPException(500, f"Translation failed: {str(e)}")
 
 
+# --------------------------------
+# 2. Text-to-Image Endpoint (fal.ai example)
+# --------------------------------
+FAL_API_KEY = os.getenv("FAL_API_KEY")
+
+class ImageRequest(BaseModel):
+    prompt: str
+    model: str = 'fal-ai/flux/dev'
+    width: int = 1024
+    height: int = 1024
+
+@app.post("/generate-image")
+async def generate_image(req: ImageRequest):
+    if not FAL_API_KEY:
+        raise HTTPException(500, "fal.ai API key not configured")
+
+    payload = {
+        "prompt": req.prompt,
+        "image_size": f"{req.width}x{req.height}",
+        "model": req.model,
+        "api_key": FAL_API_KEY,
+    }
+
+    headers = {
+        "Authorization": f"Key {FAL_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        # fal.ai uses queue + webhook, but for simple sync we use /fal/v1/calls
+        r = requests.post(
+            f"https://queue.fal.run/{req.model}",
+            json = payload,
+            headers=headers,
+        )
+        r.raise_for_status()
+        status_url = r.json()["status"]
+
+        # Poll status (simplified; in production use websocket or retry)
+        import time
+        for _ in range(30):
+            s = requests.get(status_url, headers=headers).json()
+            if s["status"] == "COMPLETED":
+                image_url = s["images"][0]["url"]
+                return {"prompt": req.prompt, "image_url": image_url}
+            if s["status"] in ["FAILED", "CANCELLED"]:
+                raise Exception("Generation failed")
+            time.sleep(2)
+        raise Exception("Timeout waiting for image")
+    except Exception as e:
+        raise HTTPException(500, f"Generation failed: {str(e)}")
+
 
 if __name__ == "__main__":
     import uvicorn
