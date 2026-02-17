@@ -52,7 +52,8 @@ async def translate_text(req: TranslateRequest):
 
 class ImageRequest(BaseModel):
     prompt: str
-    model: str = "stable-diffusion-v1-6"  # Stability engine_id
+    # Use a valid Stability engine_id. You can override this in the request body if needed.
+    model: str = "stable-diffusion-v1-6"
     width: int = 512
     height: int = 512
 
@@ -64,11 +65,11 @@ async def generate_image(req: ImageRequest):
 
     try:
         # Call Stability AI text-to-image endpoint
-        url = f"https://api.stability.ai/v1beta/generation/{req.model}/text-to-image"
+        url = f"https://api.stability.ai/v1/generation/{req.model}/text-to-image"
         headers = {
             "Authorization": f"Bearer {sta_api_key}",
             "Content-Type": "application/json",
-            "Accept": "image/png",
+            "Accept": "application/json",
         }
         payload = {
             "text_prompts": [{"text": req.prompt, "weight": 1}],
@@ -83,6 +84,17 @@ async def generate_image(req: ImageRequest):
         if r.status_code != 200:
             raise HTTPException(500, f"Generation failed: {r.status_code} {r.text}")
 
+        data = r.json()
+        if "artifacts" not in data or not data["artifacts"]:
+            raise HTTPException(500, f"Generation failed: malformed response {data}")
+
+        import base64
+        image_base64 = data["artifacts"][0].get("base64")
+        if not image_base64:
+            raise HTTPException(500, "Generation failed: missing image data")
+
+        image_bytes = base64.b64decode(image_base64)
+
         # Save returned image bytes
         images_dir = Path("generated_images")
         images_dir.mkdir(parents=True, exist_ok=True)
@@ -92,7 +104,7 @@ async def generate_image(req: ImageRequest):
         filename = images_dir / f"image_{timestamp}.png"
 
         with open(filename, "wb") as f:
-            f.write(r.content)
+            f.write(image_bytes)
 
         return {
             "prompt": req.prompt,
