@@ -4,7 +4,11 @@ from googletrans import Translator
 import requests
 import os
 import inspect
+from dotenv import load_dotenv
+from pathlib import Path
 
+
+load_dotenv()
 
 app = FastAPI(title="AI Microservices - FastAPI Demo", version="0.1.0")
 
@@ -48,49 +52,52 @@ async def translate_text(req: TranslateRequest):
 
 class ImageRequest(BaseModel):
     prompt: str
-    model: str = 'fal-ai/flux/dev'
-    width: int = 1024
-    height: int = 1024
+    model: str = "stable-diffusion-v1-6"  # Stability engine_id
+    width: int = 512
+    height: int = 512
 
 @app.post("/generate-image")
 async def generate_image(req: ImageRequest):
-    fal_api_key = os.getenv("FAL_API_KEY")
-    if not fal_api_key:
-        raise HTTPException(500, "fal.ai API key not configured. Set FAL_API_KEY and restart the server.")
-
-    payload = {
-        "prompt": req.prompt,
-        "image_size": f"{req.width}x{req.height}",
-        "model": req.model,
-        "api_key": fal_api_key,
-    }
-
-    headers = {
-        "Authorization": f"Key {fal_api_key}",
-        "Content-Type": "application/json",
-    }
+    sta_api_key = os.getenv("STA_API_KEY")
+    if not sta_api_key:
+        raise HTTPException(500, "API key not configured. Set STA_API_KEY and restart the server.")
 
     try:
-        # fal.ai uses queue + webhook, but for simple sync we use /fal/v1/calls
-        r = requests.post(
-            f"https://queue.fal.run/{req.model}",
-            json = payload,
-            headers=headers,
-        )
-        r.raise_for_status()
-        status_url = r.json()["status"]
+        # Call Stability AI text-to-image endpoint
+        url = f"https://api.stability.ai/v1beta/generation/{req.model}/text-to-image"
+        headers = {
+            "Authorization": f"Bearer {sta_api_key}",
+            "Content-Type": "application/json",
+            "Accept": "image/png",
+        }
+        payload = {
+            "text_prompts": [{"text": req.prompt, "weight": 1}],
+            "height": req.height,
+            "width": req.width,
+            "cfg_scale": 7,
+            "steps": 30,
+            "samples": 1,
+        }
 
-        # Poll status (simplified; in production use websocket or retry)
-        import time
-        for _ in range(30):
-            s = requests.get(status_url, headers=headers).json()
-            if s["status"] == "COMPLETED":
-                image_url = s["images"][0]["url"]
-                return {"prompt": req.prompt, "image_url": image_url}
-            if s["status"] in ["FAILED", "CANCELLED"]:
-                raise Exception("Generation failed")
-            time.sleep(2)
-        raise Exception("Timeout waiting for image")
+        r = requests.post(url, headers=headers, json=payload)
+        if r.status_code != 200:
+            raise HTTPException(500, f"Generation failed: {r.status_code} {r.text}")
+
+        # Save returned image bytes
+        images_dir = Path("generated_images")
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+        import time as _time
+        timestamp = int(_time.time())
+        filename = images_dir / f"image_{timestamp}.png"
+
+        with open(filename, "wb") as f:
+            f.write(r.content)
+
+        return {
+            "prompt": req.prompt,
+            "saved_path": str(filename),
+        }
     except Exception as e:
         raise HTTPException(500, f"Generation failed: {str(e)}")
 
