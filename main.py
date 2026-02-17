@@ -52,8 +52,8 @@ async def translate_text(req: TranslateRequest):
 
 class ImageRequest(BaseModel):
     prompt: str
-    # Use a valid Stability engine_id. You can override this in the request body if needed.
-    model: str = "stable-diffusion-v1-6"
+    # Optional Stability engine_id; if omitted, server will use the first available engine.
+    model: str | None = None
     width: int = 512
     height: int = 512
 
@@ -64,8 +64,27 @@ async def generate_image(req: ImageRequest):
         raise HTTPException(500, "API key not configured. Set STA_API_KEY and restart the server.")
 
     try:
+        engines_resp = requests.get(
+            "https://api.stability.ai/v1/engines/list",
+            headers={"Authorization": f"Bearer {sta_api_key}", "Accept": "application/json"},
+            timeout=20,
+        )
+        engines_resp.raise_for_status()
+        engines_data = engines_resp.json()
+        engine_ids = [e.get("id") for e in engines_data if e.get("id")]
+
+        if not engine_ids:
+            raise HTTPException(500, "No Stability engines available for this API key.")
+
+        model = req.model or engine_ids[0]
+        if model not in engine_ids:
+            raise HTTPException(
+                400,
+                f"Unknown model '{model}'. Use one of: {', '.join(engine_ids)}",
+            )
+
         # Call Stability AI text-to-image endpoint
-        url = f"https://api.stability.ai/v1/generation/{req.model}/text-to-image"
+        url = f"https://api.stability.ai/v1/generation/{model}/text-to-image"
         headers = {
             "Authorization": f"Bearer {sta_api_key}",
             "Content-Type": "application/json",
@@ -82,7 +101,7 @@ async def generate_image(req: ImageRequest):
 
         r = requests.post(url, headers=headers, json=payload)
         if r.status_code != 200:
-            raise HTTPException(500, f"Generation failed: {r.status_code} {r.text}")
+            raise HTTPException(r.status_code, f"Generation failed: {r.status_code} {r.text}")
 
         data = r.json()
         if "artifacts" not in data or not data["artifacts"]:
@@ -108,8 +127,11 @@ async def generate_image(req: ImageRequest):
 
         return {
             "prompt": req.prompt,
+            "model": model,
             "saved_path": str(filename),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Generation failed: {str(e)}")
 
